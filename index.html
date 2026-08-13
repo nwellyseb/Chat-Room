@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Our Private Room</title>
+  <title>Private Portal</title>
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -54,21 +54,6 @@
       border-radius: 4px;
       font-size: 14px;
     }
-    .controls {
-      margin-top: 16px;
-      display: flex;
-      gap: 10px;
-    }
-    button {
-      background: #5865f2;
-      color: white;
-      border: none;
-      padding: 10px 16px;
-      border-radius: 6px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    button:hover { background: #4752c4; }
   </style>
 </head>
 <body>
@@ -86,28 +71,11 @@
     </div>
   </div>
 
-  <div class="controls">
-    <button onclick="copyRoomLink()">📋 Copy Invite Link</button>
-  </div>
-
   <script>
-    // 1. Get room name from URL, or create a unique secret one
-    const urlParams = new URLSearchParams(window.location.search);
-    let roomName = urlParams.get('room');
+    // HARDCODED ROOM ID - Both devices will target this exact same room key
+    const ROOM_KEY = "our-permanent-private-portal-2026";
 
-    if (!roomName) {
-      roomName = 'our-secret-room-' + Math.floor(100000 + Math.random() * 900000);
-      window.history.replaceState({}, '', `?room=${roomName}`);
-    }
-
-    const hostId = `${roomName}-host`;
-    const guestId = `${roomName}-guest`;
-    const statusEl = document.getElementById('status');
-    
-    let localStream;
-    let peer;
-
-    // 2. WebRTC Configuration using Metered.ca Open-Relay STUN/TURN Servers
+    // STUN + Metered TURN Servers for cross-network (Wi-Fi to Mobile Data / Firewalls)
     const peerConfig = {
       config: {
         iceServers: [
@@ -122,76 +90,85 @@
             urls: 'turn:openrelay.metered.ca:443',
             username: 'openrelayproject',
             credential: 'openrelayproject'
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
           }
         ]
       }
     };
 
-    // 3. Request camera/microphone permissions
+    const statusEl = document.getElementById('status');
+    let localStream;
+    let peer;
+    let activeCall;
+
+    // 1. Get Camera & Microphone Permissions
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       .then(stream => {
         localStream = stream;
         document.getElementById('localVideo').srcObject = stream;
-        tryHost();
+        connectToRoom();
       })
       .catch(err => {
-        statusEl.innerText = "Please grant camera and microphone access.";
+        statusEl.innerText = "Please grant camera & microphone access.";
         console.error(err);
       });
 
-    // Device 1: Attempt to register as Host
-    function tryHost() {
-      peer = new Peer(hostId, peerConfig);
+    // 2. Automated Host / Guest Handshake
+    function connectToRoom() {
+      statusEl.innerText = "Connecting to private room...";
 
-      peer.on('open', () => {
-        statusEl.innerText = "Waiting for partner... Share the link!";
+      // Device 1 attempts to register as the Host
+      peer = new Peer(`${ROOM_KEY}-host`, peerConfig);
+
+      peer.on('open', (id) => {
+        // Successfully registered as Host!
+        statusEl.innerText = "In room. Waiting for partner to open the page...";
+        
         peer.on('call', call => {
+          activeCall = call;
           call.answer(localStream);
-          handleStream(call);
+          bindCallEvents(call);
         });
       });
 
-      // If Host slot is taken, Device 2 registers as Guest
       peer.on('error', err => {
+        // If Host ID is taken, it means Device 1 is already in the room!
         if (err.type === 'unavailable-id') {
-          tryGuest();
+          connectAsGuest();
         } else {
-          console.error("Peer error:", err);
+          console.error("PeerJS Host Error:", err);
+          statusEl.innerText = "Connection error. Retrying...";
+          retryConnection(3000);
         }
       });
     }
 
-    // Device 2: Register as Guest and call the Host
-    function tryGuest() {
+    // 3. Connect as Guest and dial Host
+    function connectAsGuest() {
+      statusEl.innerText = "Partner found! Connecting...";
+
+      // Assign a random guest ID so it never conflicts
+      const guestId = `${ROOM_KEY}-guest-${Math.floor(Math.random() * 100000)}`;
       peer = new Peer(guestId, peerConfig);
 
       peer.on('open', () => {
-        statusEl.innerText = "Partner found! Connecting video...";
-        
-        peer.on('call', call => {
-          call.answer(localStream);
-          handleStream(call);
-        });
-
-        // Dial the host
-        const call = peer.call(hostId, localStream);
+        // Dial the Host
+        const call = peer.call(`${ROOM_KEY}-host`, localStream);
         if (call) {
-          handleStream(call);
+          activeCall = call;
+          bindCallEvents(call);
+        } else {
+          retryConnection(2000);
         }
       });
 
       peer.on('error', err => {
-        console.error("Guest error:", err);
+        console.error("PeerJS Guest Error:", err);
+        retryConnection(2000);
       });
     }
 
-    // Handle connected video streams
-    function handleStream(call) {
+    // 4. Handle Active Streams & Reconnection
+    function bindCallEvents(call) {
       call.on('stream', remoteStream => {
         statusEl.innerText = "Connected!";
         document.getElementById('partnerLabel').innerText = "Partner";
@@ -199,19 +176,27 @@
       });
 
       call.on('close', () => {
-        statusEl.innerText = "Partner disconnected.";
-        document.getElementById('partnerLabel').innerText = "Partner (Offline)";
-        document.getElementById('remoteVideo').srcObject = null;
+        handleDisconnect("Partner left room.");
       });
 
       call.on('error', err => {
-        console.error("Call error:", err);
+        console.error("Call Error:", err);
+        handleDisconnect("Call interrupted.");
       });
     }
 
-    function copyRoomLink() {
-      navigator.clipboard.writeText(window.location.href);
-      alert("Room link copied to clipboard! Send this link to your partner.");
+    function handleDisconnect(message) {
+      statusEl.innerText = `${message} Reconnecting...`;
+      document.getElementById('partnerLabel').innerText = "Partner (Offline)";
+      document.getElementById('remoteVideo').srcObject = null;
+      retryConnection(2000);
+    }
+
+    function retryConnection(delayMs) {
+      if (peer) {
+        peer.destroy();
+      }
+      setTimeout(connectToRoom, delayMs);
     }
   </script>
 </body>
