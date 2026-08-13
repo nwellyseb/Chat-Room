@@ -2,36 +2,135 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Live Video Portal</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Private Portal</title>
   <style>
-    * { 
-      box-sizing: border-box; 
-      margin: 0; 
-      padding: 0; 
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #0d0d0d;
+      color: #ffffff;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
     }
-    html, body { 
-      width: 100%; 
-      height: 100%; 
-      background-color: #000000; 
-      overflow: hidden; 
+
+    #video-grid {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
     }
-    iframe { 
-      width: 100vw; 
-      height: 100vh; 
-      border: none; 
-      display: block;
+
+    /* Remote user takes full screen */
+    #remoteVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    /* Local user floats in corner */
+    #localVideo {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      width: 130px;
+      height: 180px;
+      object-fit: cover;
+      border-radius: 12px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+      z-index: 10;
+      background: #222;
+      transform: scaleX(-1); /* Mirror local video */
+    }
+
+    #status {
+      position: absolute;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.75);
+      padding: 10px 20px;
+      border-radius: 20px;
+      font-size: 14px;
+      letter-spacing: 0.5px;
+      z-index: 20;
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      pointer-events: none;
     }
   </style>
 </head>
 <body>
 
-  <!-- Fullscreen WebRTC Connection Frame -->
-  <iframe 
-    id="videoPortal"
-    allow="camera; microphone; fullscreen; display-capture; autoplay; accelerometer; gyroscope"
-    src="https://meet.jit.si/OurPermanentPrivatePortalRoom_2026_Sync#config.prejoinPageEnabled=false&config.startWithAudioMuted=false&config.startWithVideoMuted=false&config.disableDeepLinking=true">
-  </iframe>
+  <div id="video-grid">
+    <video id="remoteVideo" autoplay playsinline></video>
+    <video id="localVideo" autoplay playsinline muted></video>
+    <div id="status">Connecting camera...</div>
+  </div>
 
+  <script type="module">
+    import { joinRoom } from 'https://cdn.jsdelivr.net/npm/trystero@0.18.0/torrent.min.js';
+
+    const statusEl = document.getElementById('status');
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+
+    // App ID & Shared Room Identifier
+    const config = { 
+      appId: 'private-p2p-portal-v1',
+      rtcConfig: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
+      }
+    };
+    
+    // Visiting the same link lands both of you in this room
+    const ROOM_NAME = 'our-private-portal-room-key-2026';
+
+    async function init() {
+      try {
+        // 1. Get local camera & mic
+        const localStream = await navigator.mediaDevices.getUserMedia({ 
+          video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
+          audio: true 
+        });
+        localVideo.srcObject = localStream;
+        statusEl.innerText = "Waiting for partner to open link...";
+
+        // 2. Join P2P Room
+        const room = joinRoom(config, ROOM_NAME);
+
+        // Send local stream to connected peer
+        room.addStream(localStream);
+
+        // Receive partner's stream
+        room.onPeerStream((remoteStream, peerId) => {
+          remoteVideo.srcObject = remoteStream;
+          statusEl.innerText = "Connected";
+          setTimeout(() => { statusEl.style.opacity = '0'; }, 3000);
+        });
+
+        // Partner leaves
+        room.onPeerLeave((peerId) => {
+          remoteVideo.srcObject = null;
+          statusEl.style.opacity = '1';
+          statusEl.innerText = "Partner disconnected. Waiting...";
+        });
+
+      } catch (err) {
+        console.error(err);
+        statusEl.innerText = "Camera permission denied or unavailable.";
+      }
+    }
+
+    init();
+  </script>
 </body>
 </html>
