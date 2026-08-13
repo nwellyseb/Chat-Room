@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Private Room</title>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #1e1f22;
+      color: #f2f3f5;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      align-items: center;
+      justify-content: center;
+    }
+    .video-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+      width: 90%;
+      max-width: 1000px;
+      margin-bottom: 20px;
+    }
+    .video-card {
+      position: relative;
+      background: #2b2d31;
+      border-radius: 12px;
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .label {
+      position: absolute;
+      bottom: 12px;
+      left: 12px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .controls {
+      display: flex;
+      gap: 12px;
+      background: #2b2d31;
+      padding: 12px 20px;
+      border-radius: 8px;
+    }
+    button {
+      background-color: #5865f2;
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 4px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    button:hover { background-color: #4752c4; }
+  </style>
+</head>
+<body>
+
+  <div class="video-grid">
+    <div class="video-card">
+      <video id="localVideo" autoplay muted playsinline></video>
+      <div class="label">You</div>
+    </div>
+    <div class="video-card">
+      <video id="remoteVideo" autoplay playsinline></video>
+      <div class="label">Partner</div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button onclick="startCall()">Call Partner</button>
+  </div>
+
+  <script>
+    // DEFINE A UNIQUE ROOM ID HERE (Keep this secret between you two)
+    const ROOM_ID = "our-secret-room-123456"; 
+
+    let localStream;
+    let peer;
+
+    // Prompt user for camera and microphone access
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      .then(stream => {
+        localStream = stream;
+        document.getElementById('localVideo').srcObject = stream;
+        initPeer();
+      })
+      .catch(err => console.error("Camera access denied:", err));
+
+    function initPeer() {
+      // Connect to PeerJS server
+      peer = new Peer();
+
+      peer.on('open', (id) => {
+        console.log('Connected with Peer ID:', id);
+      });
+
+      // Handle incoming call from your partner
+      peer.on('call', (call) => {
+        call.answer(localStream);
+        call.on('stream', (remoteStream) => {
+          document.getElementById('remoteVideo').srcObject = remoteStream;
+        });
+      });
+    }
+
+    // Call the partner when the button is clicked
+    function startCall() {
+      // Prompt for partner's ID or hardcode logic
+      const partnerId = prompt("Enter your partner's Peer ID:");
+      if (partnerId) {
+        const call = peer.call(partnerId, localStream);
+        call.on('stream', (remoteStream) => {
+          document.getElementById('remoteVideo').srcObject = remoteStream;
+        });
+      }
+    }
+  </script>
+</body>
+</html>
