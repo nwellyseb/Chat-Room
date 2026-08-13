@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Private Portal</title>
-  <!-- Official 8x8 Jitsi Web SDK -->
-  <script src="https://8x8.vc/v1/static/external_api.js"></script>
+  <title>Private Room</title>
+  <!-- Load Jitsi External API -->
+  <script src="https://meet.jit.si/external_api.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -27,37 +27,41 @@
   <div id="meet"></div>
 
   <script>
-    // 1. Get room name from URL or use a default static room name
-    const urlParams = new URLSearchParams(window.location.search);
-    let roomName = urlParams.get('room');
+    // 1. Single shared secret room key embedded directly in the site
+    // Visiting the same link lands both of you in this exact space
+    const SHARED_ROOM_ID = "OurPrivatePortalRoom2026_SecureSyncKey99";
 
-    // Default room ID if no ?room= parameter is provided
-    if (!roomName) {
-      roomName = "OurPrivatePortalRoom2026_Secure99";
-    }
+    // 2. Generate a random session ID so the server treats each device as a distinct user
+    const uniqueUserId = "user_" + Math.random().toString(36).substring(2, 9);
 
-    // 2. Initialize 8x8/Jitsi API
-    const domain = "8x8.vc";
+    const domain = "meet.jit.si";
     const options = {
-      roomName: `vpaas-magic-cookie-8x8/${roomName}`,
+      roomName: SHARED_ROOM_ID,
       width: '100%',
       height: '100%',
       parentNode: document.querySelector('#meet'),
+      userInfo: {
+        displayName: 'User_' + Math.floor(Math.random() * 100)
+      },
       configOverwrite: {
         startWithAudioMuted: false,
         startWithVideoMuted: false,
-        prejoinPageEnabled: false, // Bypasses pre-join screen for instant connection
-        disableDeepLinking: true   // Stops phone from forcing app store download
+        prejoinPageEnabled: false, // Bypasses pre-join setup, enters call directly
+        disableDeepLinking: true,   // Prevents mobile prompt to install app
+        enableWelcomePage: false
       },
       interfaceConfigOverwrite: {
+        SHOW_JITSI_WATERMARK: false,
+        SHOW_WATERMARK_FOR_GUESTS: false,
+        DEFAULT_BACKGROUND: '#121212',
         TOOLBAR_BUTTONS: [
           'microphone', 'camera', 'desktop', 'fullscreen',
-          'hangup', 'tileview', 'chat', 'raisehand'
-        ],
-        SHOW_JITSI_WATERMARK: false
+          'hangup', 'tileview', 'chat'
+        ]
       }
     };
 
+    // Initialize call on load
     const api = new JitsiMeetExternalAPI(domain, options);
   </script>
 </body>
