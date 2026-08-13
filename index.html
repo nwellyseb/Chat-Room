@@ -3,18 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Private Portal</title>
+  <title>Direct Video Portal</title>
+  <!-- 100% Free PeerJS Signaling Library -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background-color: #000000;
+      background-color: #0d0d0d;
       color: #ffffff;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       height: 100vh;
       width: 100vw;
       overflow: hidden;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
     }
@@ -37,7 +39,7 @@
       height: 160px;
       object-fit: cover;
       border-radius: 12px;
-      border: 2px solid rgba(255, 255, 255, 0.4);
+      border: 2px solid rgba(255, 255, 255, 0.3);
       background: #111;
       transform: scaleX(-1);
     }
@@ -47,13 +49,13 @@
       left: 50%;
       transform: translateX(-50%);
       background: rgba(0, 0, 0, 0.85);
-      padding: 10px 18px;
+      padding: 10px 20px;
       border-radius: 20px;
       font-size: 13px;
       border: 1px solid rgba(255, 255, 255, 0.2);
       text-align: center;
-      pointer-events: none;
       z-index: 100;
+      white-space: nowrap;
     }
     #start-btn {
       padding: 16px 32px;
@@ -70,12 +72,12 @@
 </head>
 <body>
 
-  <button id="start-btn">Start Private Call</button>
+  <button id="start-btn">Join Video Room</button>
 
   <div id="video-container">
     <video id="remoteVideo" autoplay playsinline></video>
     <video id="localVideo" autoplay playsinline muted></video>
-    <div id="status">Connecting...</div>
+    <div id="status">Connecting camera...</div>
   </div>
 
   <script>
@@ -85,35 +87,44 @@
     const localVideo = document.getElementById('localVideo');
     const remoteVideo = document.getElementById('remoteVideo');
 
-    const HOST_ID = "our-portal-unique-host-2026";
-    const GUEST_ID = "our-portal-unique-guest-2026";
+    // 1. Get Room ID from URL Hash or generate a shared one
+    let roomHash = location.hash.replace('#', '');
+    let isHost = false;
 
+    if (!roomHash) {
+      // Default room key if no specific room parameter is in URL
+      roomHash = "our-private-shared-room-2026";
+    }
+
+    const hostPeerId = "portal-host-" + roomHash;
     let localStream;
+    let peer;
 
     startBtn.addEventListener('click', async () => {
       startBtn.style.display = 'none';
       videoContainer.style.display = 'block';
 
       try {
-        // Request Mobile Media Access
+        // Request Camera & Mic Permissions
         localStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user" },
+          video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: true
         });
         
         localVideo.srcObject = localStream;
         localVideo.play();
-        statusEl.innerText = "Camera active. Connecting room...";
+        statusEl.innerText = "Camera ready. Connecting to session...";
 
-        initPeer();
+        initConnection();
       } catch (err) {
         console.error(err);
-        statusEl.innerText = "Error: Allow Camera & Mic in browser settings!";
+        statusEl.innerText = "Camera permission denied or unavailable.";
       }
     });
 
-    function initPeer() {
-      const peer = new Peer(HOST_ID, {
+    function initConnection() {
+      // Attempt to register as Host first
+      peer = new Peer(hostPeerId, {
         config: {
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
@@ -122,30 +133,40 @@
         }
       });
 
-      peer.on('open', () => {
-        statusEl.innerText = "Room open. Waiting for partner...";
+      peer.on('open', (id) => {
+        isHost = true;
+        // Keep current room hash in address bar
+        location.hash = roomHash;
+        statusEl.innerText = "Waiting for partner to open link...";
       });
 
+      // Host receives call from Guest
       peer.on('call', (call) => {
         call.answer(localStream);
         call.on('stream', (remoteStream) => {
           remoteVideo.srcObject = remoteStream;
           remoteVideo.play();
-          statusEl.innerText = "Connected";
+          statusEl.innerText = "Connected!";
+          setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
         });
       });
 
+      // If Host ID is taken, connect as Guest
       peer.on('error', (err) => {
         if (err.type === 'unavailable-id') {
           connectAsGuest();
         } else {
-          statusEl.innerText = "Connection error. Retrying...";
+          statusEl.innerText = "Connection error. Refreshing...";
+          console.error(err);
         }
       });
     }
 
     function connectAsGuest() {
-      const guestPeer = new Peer(GUEST_ID, {
+      // Unique Peer ID for Guest
+      const guestId = "portal-guest-" + Math.random().toString(36).substring(2, 9);
+      
+      const guestPeer = new Peer(guestId, {
         config: {
           iceServers: [
             { urls: 'stun:stun.l.google.com:19302' },
@@ -155,13 +176,14 @@
       });
 
       guestPeer.on('open', () => {
-        statusEl.innerText = "Connecting to partner...";
-        const call = guestPeer.call(HOST_ID, localStream);
+        statusEl.innerText = "Joining host session...";
+        const call = guestPeer.call(hostPeerId, localStream);
         
         call.on('stream', (remoteStream) => {
           remoteVideo.srcObject = remoteStream;
           remoteVideo.play();
-          statusEl.innerText = "Connected";
+          statusEl.innerText = "Connected!";
+          setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
         });
       });
     }
