@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Private Portal</title>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <!-- Load Jitsi External API Script -->
+  <script src="https://meet.jit.si/external_api.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -17,187 +18,66 @@
       align-items: center;
       justify-content: center;
     }
-    .status-bar {
-      margin-bottom: 16px;
-      padding: 10px 20px;
+    .header {
+      margin-bottom: 12px;
+      padding: 8px 18px;
       background: #2b2d31;
       border-radius: 20px;
       font-size: 14px;
       color: #dbdee1;
       text-align: center;
     }
-    .video-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 16px;
+    #meet-container {
       width: 90%;
       max-width: 1000px;
-    }
-    .video-card {
-      position: relative;
-      background: #2b2d31;
+      height: 75vh;
       border-radius: 12px;
       overflow: hidden;
-      aspect-ratio: 16 / 9;
+      background: #2b2d31;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
     }
-    video {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-    .label {
-      position: absolute;
-      bottom: 12px;
-      left: 12px;
-      background: rgba(0, 0, 0, 0.6);
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 14px;
+    iframe {
+      border: none !important;
     }
   </style>
 </head>
 <body>
 
-  <div id="status" class="status-bar">Accessing camera...</div>
+  <div class="header">🔒 Private Room Connected</div>
 
-  <div class="video-grid">
-    <div class="video-card">
-      <video id="localVideo" autoplay muted playsinline></video>
-      <div class="label">You</div>
-    </div>
-    <div class="video-card">
-      <video id="remoteVideo" autoplay playsinline></video>
-      <div class="label" id="partnerLabel">Partner (Offline)</div>
-    </div>
-  </div>
+  <!-- Video Call Portal Container -->
+  <div id="meet-container"></div>
 
   <script>
-    // HARDCODED ROOM ID - Both devices will target this exact same room key
-    const ROOM_KEY = "our-permanent-private-portal-2026";
+    // HARDCODED PRIVATE ROOM - Both devices will land here automatically
+    const ROOM_NAME = "OurPrivatePortalRoom2026_SecureKey99";
 
-    // STUN + Metered TURN Servers for cross-network (Wi-Fi to Mobile Data / Firewalls)
-    const peerConfig = {
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          {
-            urls: 'turn:openrelay.metered.ca:80',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:443',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
-          }
+    const domain = "meet.jit.si";
+    const options = {
+      roomName: ROOM_NAME,
+      parentNode: document.querySelector('#meet-container'),
+      width: '100%',
+      height: '100%',
+      configOverwrite: {
+        startWithAudioMuted: false,
+        startWithVideoMuted: false,
+        disableDeepLinking: true, // Prevents prompting to download the mobile app
+        prejoinPageEnabled: false, // Skips pre-join screen, enters room instantly
+        toolbarButtons: [
+          'microphone', 'camera', 'desktop', 'fullscreen',
+          'hangup', 'tileview', 'chat'
         ]
+      },
+      interfaceConfigOverwrite: {
+        SHOW_JITSI_WATERMARK: false,
+        SHOW_WATERMARK_FOR_GUESTS: false,
+        DEFAULT_BACKGROUND: '#1e1f22',
+        TOOLBAR_ALWAYS_VISIBLE: false
       }
     };
 
-    const statusEl = document.getElementById('status');
-    let localStream;
-    let peer;
-    let activeCall;
-
-    // 1. Get Camera & Microphone Permissions
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then(stream => {
-        localStream = stream;
-        document.getElementById('localVideo').srcObject = stream;
-        connectToRoom();
-      })
-      .catch(err => {
-        statusEl.innerText = "Please grant camera & microphone access.";
-        console.error(err);
-      });
-
-    // 2. Automated Host / Guest Handshake
-    function connectToRoom() {
-      statusEl.innerText = "Connecting to private room...";
-
-      // Device 1 attempts to register as the Host
-      peer = new Peer(`${ROOM_KEY}-host`, peerConfig);
-
-      peer.on('open', (id) => {
-        // Successfully registered as Host!
-        statusEl.innerText = "In room. Waiting for partner to open the page...";
-        
-        peer.on('call', call => {
-          activeCall = call;
-          call.answer(localStream);
-          bindCallEvents(call);
-        });
-      });
-
-      peer.on('error', err => {
-        // If Host ID is taken, it means Device 1 is already in the room!
-        if (err.type === 'unavailable-id') {
-          connectAsGuest();
-        } else {
-          console.error("PeerJS Host Error:", err);
-          statusEl.innerText = "Connection error. Retrying...";
-          retryConnection(3000);
-        }
-      });
-    }
-
-    // 3. Connect as Guest and dial Host
-    function connectAsGuest() {
-      statusEl.innerText = "Partner found! Connecting...";
-
-      // Assign a random guest ID so it never conflicts
-      const guestId = `${ROOM_KEY}-guest-${Math.floor(Math.random() * 100000)}`;
-      peer = new Peer(guestId, peerConfig);
-
-      peer.on('open', () => {
-        // Dial the Host
-        const call = peer.call(`${ROOM_KEY}-host`, localStream);
-        if (call) {
-          activeCall = call;
-          bindCallEvents(call);
-        } else {
-          retryConnection(2000);
-        }
-      });
-
-      peer.on('error', err => {
-        console.error("PeerJS Guest Error:", err);
-        retryConnection(2000);
-      });
-    }
-
-    // 4. Handle Active Streams & Reconnection
-    function bindCallEvents(call) {
-      call.on('stream', remoteStream => {
-        statusEl.innerText = "Connected!";
-        document.getElementById('partnerLabel').innerText = "Partner";
-        document.getElementById('remoteVideo').srcObject = remoteStream;
-      });
-
-      call.on('close', () => {
-        handleDisconnect("Partner left room.");
-      });
-
-      call.on('error', err => {
-        console.error("Call Error:", err);
-        handleDisconnect("Call interrupted.");
-      });
-    }
-
-    function handleDisconnect(message) {
-      statusEl.innerText = `${message} Reconnecting...`;
-      document.getElementById('partnerLabel').innerText = "Partner (Offline)";
-      document.getElementById('remoteVideo').srcObject = null;
-      retryConnection(2000);
-    }
-
-    function retryConnection(delayMs) {
-      if (peer) {
-        peer.destroy();
-      }
-      setTimeout(connectToRoom, delayMs);
-    }
+    // Initialize the video portal
+    const api = new JitsiMeetExternalAPI(domain, options);
   </script>
 </body>
 </html>
