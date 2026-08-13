@@ -3,42 +3,41 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Private Video Room</title>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <title>Private Room</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background-color: #121212;
-      color: #ffffff;
+      background-color: #1e1f22;
+      color: #f2f3f5;
       display: flex;
       flex-direction: column;
+      height: 100vh;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
-      padding: 16px;
     }
-    .container {
-      width: 100%;
-      max-width: 900px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 16px;
+    .status-bar {
+      margin-bottom: 16px;
+      padding: 10px 20px;
+      background: #2b2d31;
+      border-radius: 20px;
+      font-size: 14px;
+      color: #dbdee1;
+      text-align: center;
     }
     .video-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
       gap: 16px;
-      width: 100%;
+      width: 90%;
+      max-width: 1000px;
     }
     .video-card {
       position: relative;
-      background: #1e1e1e;
+      background: #2b2d31;
       border-radius: 12px;
       overflow: hidden;
       aspect-ratio: 16 / 9;
-      border: 1px solid #333;
     }
     video {
       width: 100%;
@@ -47,69 +46,71 @@
     }
     .label {
       position: absolute;
-      bottom: 8px;
-      left: 8px;
-      background: rgba(0, 0, 0, 0.7);
+      bottom: 12px;
+      left: 12px;
+      background: rgba(0, 0, 0, 0.6);
       padding: 4px 8px;
       border-radius: 4px;
-      font-size: 12px;
+      font-size: 14px;
+    }
+    .controls {
+      margin-top: 16px;
+      display: flex;
+      gap: 10px;
     }
     button {
-      background: #2563eb;
+      background: #5865f2;
       color: white;
       border: none;
-      padding: 12px 24px;
-      border-radius: 8px;
-      font-size: 16px;
+      padding: 10px 16px;
+      border-radius: 6px;
       font-weight: bold;
       cursor: pointer;
     }
-    button:hover { background: #1d4ed8; }
-    #log {
-      width: 100%;
-      background: #18181b;
-      border: 1px solid #27272a;
-      border-radius: 8px;
-      padding: 12px;
-      font-family: monospace;
-      font-size: 12px;
-      color: #a1a1aa;
-      max-height: 150px;
-      overflow-y: auto;
-      text-align: left;
-    }
+    button:hover { background: #4752c4; }
   </style>
 </head>
 <body>
 
-  <div class="container">
-    <h2>Private Video Room</h2>
+  <div id="status" class="status-bar">Accessing camera...</div>
 
-    <div id="setup-panel">
-      <button id="start-btn" onclick="initializeRoom()">📹 Enable Camera & Join</button>
+  <div class="video-grid">
+    <div class="video-card">
+      <video id="localVideo" autoplay muted playsinline></video>
+      <div class="label">You</div>
     </div>
-
-    <div class="video-grid">
-      <div class="video-card">
-        <video id="localVideo" autoplay muted playsinline></video>
-        <div class="label">You</div>
-      </div>
-      <div class="video-card">
-        <video id="remoteVideo" autoplay playsinline></video>
-        <div class="label" id="partnerLabel">Partner (Waiting...)</div>
-      </div>
+    <div class="video-card">
+      <video id="remoteVideo" autoplay playsinline></video>
+      <div class="label" id="partnerLabel">Partner (Offline)</div>
     </div>
-
-    <div id="log">Logs will appear here...</div>
   </div>
 
-  <script>
-    // HARDCODED ROOM ID
-    const ROOM_KEY = "our-private-portal-2026-v2";
+  <div class="controls">
+    <button onclick="copyRoomLink()">📋 Copy Invite Link</button>
+  </div>
 
-    // RELAY CONFIGURATION
-    const peerConfig = {
-      config: {
+  <!-- Serverless WebRTC Signaling via MQTT -->
+  <script type="module">
+    import { joinRoom } from 'https://cdn.jsdelivr.net/npm/trystero@0.22.0/mqtt.min.js';
+
+    // 1. Get room key from URL or generate a unique room code
+    const urlParams = new URLSearchParams(window.location.search);
+    let roomCode = urlParams.get('room');
+
+    if (!roomCode) {
+      roomCode = 'room-' + Math.random().toString(36).substring(2, 9);
+      window.history.replaceState({}, '', `?room=${roomCode}`);
+    }
+
+    const statusEl = document.getElementById('status');
+    const partnerLabel = document.getElementById('partnerLabel');
+    const remoteVideo = document.getElementById('remoteVideo');
+    let localStream;
+
+    // 2. STUN & TURN Relay Configuration
+    const config = {
+      appId: 'our-private-portal-v1',
+      rtcConfig: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
@@ -122,105 +123,52 @@
             urls: 'turn:openrelay.metered.ca:443',
             username: 'openrelayproject',
             credential: 'openrelayproject'
-          },
-          {
-            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-            username: 'openrelayproject',
-            credential: 'openrelayproject'
           }
         ]
       }
     };
 
-    let localStream;
-    let peer;
+    // 3. Initialize Camera & Room Connection
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      .then(stream => {
+        localStream = stream;
+        document.getElementById('localVideo').srcObject = stream;
+        statusEl.innerText = "Waiting for partner... Copy and send her the link!";
 
-    function log(msg) {
-      const logEl = document.getElementById('log');
-      logEl.innerHTML += `<div>> ${msg}</div>`;
-      logEl.scrollTop = logEl.scrollHeight;
-      console.log(msg);
-    }
+        // Join the room defined by the URL ?room= parameter
+        const room = joinRoom(config, roomCode);
 
-    async function initializeRoom() {
-      document.getElementById('setup-panel').style.display = 'none';
-      log("Requesting camera and microphone access...");
-
-      try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        document.getElementById('localVideo').srcObject = localStream;
-        log("Camera enabled. Connecting to server...");
-        tryAsHost();
-      } catch (err) {
-        log("ERROR: Could not access camera/mic. Please allow permissions.");
-      }
-    }
-
-    function tryAsHost() {
-      const hostId = `${ROOM_KEY}-host`;
-      log(`Attempting to join as Host...`);
-
-      peer = new Peer(hostId, peerConfig);
-
-      peer.on('open', id => {
-        log("Registered as HOST. Waiting for partner to open the page...");
-        
-        peer.on('call', call => {
-          log("Partner incoming! Answering call...");
-          call.answer(localStream);
-          handleStream(call);
+        // When your partner opens the exact same link
+        room.onPeerJoin(peerId => {
+          statusEl.innerText = "Partner found! Connecting video...";
+          room.addStream(localStream, peerId);
         });
+
+        // Receiving remote video stream
+        room.onPeerStream((remoteStream, peerId) => {
+          statusEl.innerText = "Connected!";
+          partnerLabel.innerText = "Partner";
+          remoteVideo.srcObject = remoteStream;
+        });
+
+        // Handle partner leaving/refreshing
+        room.onPeerLeave(peerId => {
+          statusEl.innerText = "Partner disconnected. Waiting for her to re-open the link...";
+          partnerLabel.innerText = "Partner (Offline)";
+          remoteVideo.srcObject = null;
+        });
+
+      })
+      .catch(err => {
+        statusEl.innerText = "Please grant camera & microphone permissions.";
+        console.error(err);
       });
 
-      peer.on('error', err => {
-        if (err.type === 'unavailable-id') {
-          log("Host already present. Joining as GUEST...");
-          peer.destroy();
-          tryAsGuest();
-        } else {
-          log(`Host Error: ${err.type}`);
-        }
-      });
-    }
-
-    function tryAsGuest() {
-      const guestId = `${ROOM_KEY}-guest-${Math.floor(Math.random() * 1000)}`;
-      peer = new Peer(guestId, peerConfig);
-
-      peer.on('open', id => {
-        log("Registered as GUEST. Calling Host...");
-        const hostId = `${ROOM_KEY}-host`;
-        const call = peer.call(hostId, localStream);
-
-        if (call) {
-          handleStream(call);
-        } else {
-          log("Failed to initiate call.");
-        }
-      });
-
-      peer.on('error', err => {
-        log(`Guest Error: ${err.type}`);
-      });
-    }
-
-    function handleStream(call) {
-      call.on('stream', remoteStream => {
-        log("SUCCESS: Video stream received!");
-        document.getElementById('partnerLabel').innerText = "Partner (Connected)";
-        document.getElementById('remoteVideo').srcObject = remoteStream;
-      });
-
-      call.on('close', () => {
-        log("Partner disconnected.");
-        document.getElementById('partnerLabel').innerText = "Partner (Offline)";
-        document.getElementById('remoteVideo').srcObject = null;
-      });
-
-      call.on('error', err => {
-        log(`Stream Error: ${err}`);
-      });
-    }
+    // Global copy function for button
+    window.copyRoomLink = function() {
+      navigator.clipboard.writeText(window.location.href);
+      alert("Room link copied! Send this link to your partner.");
+    };
   </script>
 </body>
 </html>
