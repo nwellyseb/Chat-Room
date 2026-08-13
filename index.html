@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Private Room</title>
-  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <title>Our Private Portal</title>
+  <script src="https://unpkg.com/@daily-co/daily-js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -17,178 +17,42 @@
       align-items: center;
       justify-content: center;
     }
-    .status-bar {
-      margin-bottom: 16px;
-      padding: 10px 20px;
-      background: #2b2d31;
-      border-radius: 20px;
-      font-size: 14px;
-      color: #dbdee1;
-      text-align: center;
-    }
-    .video-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 16px;
-      width: 90%;
-      max-width: 1000px;
-    }
-    .video-card {
-      position: relative;
-      background: #2b2d31;
+    #call-container {
+      width: 95%;
+      max-width: 1100px;
+      height: 80vh;
       border-radius: 12px;
       overflow: hidden;
-      aspect-ratio: 16 / 9;
+      background: #2b2d31;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     }
-    video {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-    .label {
-      position: absolute;
-      bottom: 12px;
-      left: 12px;
-      background: rgba(0, 0, 0, 0.6);
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 14px;
-    }
-    .controls {
-      margin-top: 16px;
-      display: flex;
-      gap: 10px;
-    }
-    button {
-      background: #5865f2;
-      color: white;
-      border: none;
-      padding: 10px 16px;
-      border-radius: 6px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    button:hover { background: #4752c4; }
   </style>
 </head>
 <body>
 
-  <div id="status" class="status-bar">Setting up camera...</div>
-
-  <div class="video-grid">
-    <div class="video-card">
-      <video id="localVideo" autoplay muted playsinline></video>
-      <div class="label">You</div>
-    </div>
-    <div class="video-card">
-      <video id="remoteVideo" autoplay playsinline></video>
-      <div class="label" id="partnerLabel">Partner (Offline)</div>
-    </div>
-  </div>
-
-  <div class="controls">
-    <button onclick="copyRoomLink()">📋 Copy Invite Link</button>
-  </div>
+  <div id="call-container"></div>
 
   <script>
-    const urlParams = new URLSearchParams(window.location.search);
-    let roomName = urlParams.get('room');
+    // ⚠️ REPLACE THIS WITH YOUR DAILY.CO ROOM URL
+    const ROOM_URL = "https://yourname.daily.co/our-private-room";
 
-    if (!roomName) {
-      roomName = 'room-' + Math.floor(100000 + Math.random() * 900000);
-      window.history.replaceState({}, '', `?room=${roomName}`);
-    }
-
-    const peerA_ID = `${roomName}-userA`;
-    const peerB_ID = `${roomName}-userB`;
-
-    const statusEl = document.getElementById('status');
-    let localStream;
-    let peer;
-    let currentCall;
-
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then(stream => {
-        localStream = stream;
-        document.getElementById('localVideo').srcObject = stream;
-        tryUserA();
-      })
-      .catch(err => {
-        statusEl.innerText = "Please grant camera and microphone permissions.";
-      });
-
-    // Try joining as User A (First person in room)
-    function tryUserA() {
-      peer = new Peer(peerA_ID);
-
-      peer.on('open', () => {
-        statusEl.innerText = "Waiting for partner... Share the link!";
-        listenForCalls();
-      });
-
-      peer.on('error', err => {
-        // If User A ID is already taken, this device becomes User B
-        if (err.type === 'unavailable-id') {
-          tryUserB();
-        } else {
-          console.error(err);
+    // Initialize video frame inside container
+    const callFrame = window.DailyIframe.createFrame(
+      document.getElementById('call-container'),
+      {
+        showLeaveButton: false,
+        showFullscreenButton: true,
+        iframeStyle: {
+          width: '100%',
+          height: '100%',
+          border: 'none',
+          borderRadius: '12px'
         }
-      });
-    }
-
-    // Join as User B (Second person in room)
-    function tryUserB() {
-      peer = new Peer(peerB_ID);
-
-      peer.on('open', () => {
-        statusEl.innerText = "Connecting to partner...";
-        listenForCalls();
-        callPartner(peerA_ID);
-      });
-
-      peer.on('error', err => {
-        console.error(err);
-      });
-    }
-
-    function listenForCalls() {
-      peer.on('call', call => {
-        call.answer(localStream);
-        setupStream(call);
-      });
-    }
-
-    function callPartner(targetID) {
-      const call = peer.call(targetID, localStream);
-      if (call) {
-        setupStream(call);
       }
-    }
+    );
 
-    function setupStream(call) {
-      currentCall = call;
-
-      call.on('stream', remoteStream => {
-        statusEl.innerText = "Connected!";
-        document.getElementById('partnerLabel').innerText = "Partner";
-        document.getElementById('remoteVideo').srcObject = remoteStream;
-      });
-
-      call.on('close', () => {
-        statusEl.innerText = "Partner disconnected.";
-        document.getElementById('partnerLabel').innerText = "Partner (Offline)";
-        document.getElementById('remoteVideo').srcObject = null;
-      });
-
-      call.on('error', err => {
-        console.error(err);
-      });
-    }
-
-    function copyRoomLink() {
-      navigator.clipboard.writeText(window.location.href);
-      alert("Room link copied to clipboard! Send this link to your partner.");
-    }
+    // Join room automatically on load
+    callFrame.join({ url: ROOM_URL });
   </script>
 </body>
 </html>
