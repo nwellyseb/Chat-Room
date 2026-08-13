@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Our Private Portal</title>
-  <script src="https://unpkg.com/@daily-co/daily-js"></script>
+  <title>Portal</title>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -17,42 +17,173 @@
       align-items: center;
       justify-content: center;
     }
-    #call-container {
-      width: 95%;
-      max-width: 1100px;
-      height: 80vh;
+    .status-bar {
+      margin-bottom: 16px;
+      padding: 10px 20px;
+      background: #2b2d31;
+      border-radius: 20px;
+      font-size: 14px;
+      color: #dbdee1;
+      text-align: center;
+    }
+    .video-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+      width: 90%;
+      max-width: 1000px;
+    }
+    .video-card {
+      position: relative;
+      background: #2b2d31;
       border-radius: 12px;
       overflow: hidden;
-      background: #2b2d31;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      aspect-ratio: 16 / 9;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .label {
+      position: absolute;
+      bottom: 12px;
+      left: 12px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 14px;
     }
   </style>
 </head>
 <body>
 
-  <div id="call-container"></div>
+  <div id="status" class="status-bar">Connecting camera...</div>
+
+  <div class="video-grid">
+    <div class="video-card">
+      <video id="localVideo" autoplay muted playsinline></video>
+      <div class="label">You</div>
+    </div>
+    <div class="video-card">
+      <video id="remoteVideo" autoplay playsinline></video>
+      <div class="label" id="partnerLabel">Partner (Offline)</div>
+    </div>
+  </div>
 
   <script>
-    // ⚠️ REPLACE THIS WITH YOUR DAILY.CO ROOM URL
-    const ROOM_URL = "https://yourname.daily.co/our-private-room";
-
-    // Initialize video frame inside container
-    const callFrame = window.DailyIframe.createFrame(
-      document.getElementById('call-container'),
-      {
-        showLeaveButton: false,
-        showFullscreenButton: true,
-        iframeStyle: {
-          width: '100%',
-          height: '100%',
-          border: 'none',
-          borderRadius: '12px'
-        }
+    // Hardcoded secret room key - both devices will ALWAYS use this exact room automatically
+    const ROOM_KEY = "our-permanent-private-room-2026";
+    
+    // STUN configuration for cross-network support (Wi-Fi to Mobile Data)
+    const peerConfig = {
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' }
+        ]
       }
-    );
+    };
 
-    // Join room automatically on load
-    callFrame.join({ url: ROOM_URL });
+    const statusEl = document.getElementById('status');
+    let localStream;
+    let peer;
+    let activeCall;
+
+    // 1. Get Camera Stream
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      .then(stream => {
+        localStream = stream;
+        document.getElementById('localVideo').srcObject = stream;
+        startPeerSession();
+      })
+      .catch(err => {
+        statusEl.innerText = "Please allow camera and microphone access.";
+      });
+
+    function startPeerSession() {
+      // Create a unique random session ID for this specific tab/device opening
+      const myUniqueId = `${ROOM_KEY}-${Math.random().toString(36).substring(2, 9)}`;
+      
+      peer = new Peer(myUniqueId, peerConfig);
+
+      peer.on('open', (id) => {
+        statusEl.innerText = "Searching for partner...";
+        listenForIncomingCalls();
+        broadcastPresence();
+      });
+
+      peer.on('error', err => {
+        console.error("Peer error:", err);
+      });
+    }
+
+    // 2. Listen for incoming calls
+    function listenForIncomingCalls() {
+      peer.on('call', call => {
+        activeCall = call;
+        call.answer(localStream);
+        bindCallEvents(call);
+      });
+    }
+
+    // 3. Keep pinging to find if another device is online in the same room
+    function broadcastPresence() {
+      const pingId = `${ROOM_KEY}-anchor`;
+      
+      // Try to establish connection with the anchor peer
+      const conn = peer.connect(pingId);
+      
+      conn.on('open', () => {
+        // Anchor exists, call them
+        dialPartner(pingId);
+      });
+
+      conn.on('error', () => {
+        // No anchor exists yet, register as the primary anchor
+        becomeAnchor(pingId);
+      });
+    }
+
+    function becomeAnchor(anchorId) {
+      // Destroy current instance and take over the fixed anchor slot
+      peer.destroy();
+      
+      peer = new Peer(anchorId, peerConfig);
+
+      peer.on('open', () => {
+        statusEl.innerText = "Waiting for partner to open site...";
+        listenForIncomingCalls();
+      });
+
+      peer.on('error', err => {
+        // If anchor got claimed while switching, fallback to random peer dial
+        if (err.type === 'unavailable-id') {
+          startPeerSession();
+        }
+      });
+    }
+
+    function dialPartner(targetId) {
+      statusEl.innerText = "Partner found! Connecting...";
+      const call = peer.call(targetId, localStream);
+      bindCallEvents(call);
+    }
+
+    function bindCallEvents(call) {
+      call.on('stream', remoteStream => {
+        statusEl.innerText = "Connected!";
+        document.getElementById('partnerLabel').innerText = "Partner";
+        document.getElementById('remoteVideo').srcObject = remoteStream;
+      });
+
+      call.on('close', () => {
+        statusEl.innerText = "Partner left. Waiting...";
+        document.getElementById('partnerLabel').innerText = "Partner (Offline)";
+        document.getElementById('remoteVideo').srcObject = null;
+        startPeerSession(); // Reset & search again
+      });
+    }
   </script>
 </body>
 </html>
