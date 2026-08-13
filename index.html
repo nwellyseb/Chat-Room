@@ -3,81 +3,224 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Private Portal</title>
-  <!-- Load Jitsi External API Script -->
-  <script src="https://meet.jit.si/external_api.js"></script>
+  <title>Private Video Room</title>
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background-color: #1e1f22;
-      color: #f2f3f5;
+      background-color: #121212;
+      color: #ffffff;
       display: flex;
       flex-direction: column;
-      height: 100vh;
       align-items: center;
       justify-content: center;
+      min-height: 100vh;
+      padding: 16px;
     }
-    .header {
-      margin-bottom: 12px;
-      padding: 8px 18px;
-      background: #2b2d31;
-      border-radius: 20px;
-      font-size: 14px;
-      color: #dbdee1;
-      text-align: center;
+    .container {
+      width: 100%;
+      max-width: 900px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
     }
-    #meet-container {
-      width: 90%;
-      max-width: 1000px;
-      height: 75vh;
+    .video-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      width: 100%;
+    }
+    .video-card {
+      position: relative;
+      background: #1e1e1e;
       border-radius: 12px;
       overflow: hidden;
-      background: #2b2d31;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      aspect-ratio: 16 / 9;
+      border: 1px solid #333;
     }
-    iframe {
-      border: none !important;
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .label {
+      position: absolute;
+      bottom: 8px;
+      left: 8px;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    button:hover { background: #1d4ed8; }
+    #log {
+      width: 100%;
+      background: #18181b;
+      border: 1px solid #27272a;
+      border-radius: 8px;
+      padding: 12px;
+      font-family: monospace;
+      font-size: 12px;
+      color: #a1a1aa;
+      max-height: 150px;
+      overflow-y: auto;
+      text-align: left;
     }
   </style>
 </head>
 <body>
 
-  <div class="header">🔒 Private Room Connected</div>
+  <div class="container">
+    <h2>Private Video Room</h2>
 
-  <!-- Video Call Portal Container -->
-  <div id="meet-container"></div>
+    <div id="setup-panel">
+      <button id="start-btn" onclick="initializeRoom()">📹 Enable Camera & Join</button>
+    </div>
+
+    <div class="video-grid">
+      <div class="video-card">
+        <video id="localVideo" autoplay muted playsinline></video>
+        <div class="label">You</div>
+      </div>
+      <div class="video-card">
+        <video id="remoteVideo" autoplay playsinline></video>
+        <div class="label" id="partnerLabel">Partner (Waiting...)</div>
+      </div>
+    </div>
+
+    <div id="log">Logs will appear here...</div>
+  </div>
 
   <script>
-    // HARDCODED PRIVATE ROOM - Both devices will land here automatically
-    const ROOM_NAME = "OurPrivatePortalRoom2026_SecureKey99";
+    // HARDCODED ROOM ID
+    const ROOM_KEY = "our-private-portal-2026-v2";
 
-    const domain = "meet.jit.si";
-    const options = {
-      roomName: ROOM_NAME,
-      parentNode: document.querySelector('#meet-container'),
-      width: '100%',
-      height: '100%',
-      configOverwrite: {
-        startWithAudioMuted: false,
-        startWithVideoMuted: false,
-        disableDeepLinking: true, // Prevents prompting to download the mobile app
-        prejoinPageEnabled: false, // Skips pre-join screen, enters room instantly
-        toolbarButtons: [
-          'microphone', 'camera', 'desktop', 'fullscreen',
-          'hangup', 'tileview', 'chat'
+    // RELAY CONFIGURATION
+    const peerConfig = {
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
         ]
-      },
-      interfaceConfigOverwrite: {
-        SHOW_JITSI_WATERMARK: false,
-        SHOW_WATERMARK_FOR_GUESTS: false,
-        DEFAULT_BACKGROUND: '#1e1f22',
-        TOOLBAR_ALWAYS_VISIBLE: false
       }
     };
 
-    // Initialize the video portal
-    const api = new JitsiMeetExternalAPI(domain, options);
+    let localStream;
+    let peer;
+
+    function log(msg) {
+      const logEl = document.getElementById('log');
+      logEl.innerHTML += `<div>> ${msg}</div>`;
+      logEl.scrollTop = logEl.scrollHeight;
+      console.log(msg);
+    }
+
+    async function initializeRoom() {
+      document.getElementById('setup-panel').style.display = 'none';
+      log("Requesting camera and microphone access...");
+
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        document.getElementById('localVideo').srcObject = localStream;
+        log("Camera enabled. Connecting to server...");
+        tryAsHost();
+      } catch (err) {
+        log("ERROR: Could not access camera/mic. Please allow permissions.");
+      }
+    }
+
+    function tryAsHost() {
+      const hostId = `${ROOM_KEY}-host`;
+      log(`Attempting to join as Host...`);
+
+      peer = new Peer(hostId, peerConfig);
+
+      peer.on('open', id => {
+        log("Registered as HOST. Waiting for partner to open the page...");
+        
+        peer.on('call', call => {
+          log("Partner incoming! Answering call...");
+          call.answer(localStream);
+          handleStream(call);
+        });
+      });
+
+      peer.on('error', err => {
+        if (err.type === 'unavailable-id') {
+          log("Host already present. Joining as GUEST...");
+          peer.destroy();
+          tryAsGuest();
+        } else {
+          log(`Host Error: ${err.type}`);
+        }
+      });
+    }
+
+    function tryAsGuest() {
+      const guestId = `${ROOM_KEY}-guest-${Math.floor(Math.random() * 1000)}`;
+      peer = new Peer(guestId, peerConfig);
+
+      peer.on('open', id => {
+        log("Registered as GUEST. Calling Host...");
+        const hostId = `${ROOM_KEY}-host`;
+        const call = peer.call(hostId, localStream);
+
+        if (call) {
+          handleStream(call);
+        } else {
+          log("Failed to initiate call.");
+        }
+      });
+
+      peer.on('error', err => {
+        log(`Guest Error: ${err.type}`);
+      });
+    }
+
+    function handleStream(call) {
+      call.on('stream', remoteStream => {
+        log("SUCCESS: Video stream received!");
+        document.getElementById('partnerLabel').innerText = "Partner (Connected)";
+        document.getElementById('remoteVideo').srcObject = remoteStream;
+      });
+
+      call.on('close', () => {
+        log("Partner disconnected.");
+        document.getElementById('partnerLabel').innerText = "Partner (Offline)";
+        document.getElementById('remoteVideo').srcObject = null;
+      });
+
+      call.on('error', err => {
+        log(`Stream Error: ${err}`);
+      });
+    }
   </script>
 </body>
 </html>
