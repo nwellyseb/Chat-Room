@@ -3,48 +3,62 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Private Room</title>
-  <!-- Load Daily.co Iframe API -->
-  <script src="https://unpkg.com/@daily-co/daily-js"></script>
+  <title>Private Portal</title>
+  <!-- Official 8x8 Jitsi Web SDK -->
+  <script src="https://8x8.vc/v1/static/external_api.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
+    html, body {
+      width: 100%;
+      height: 100%;
       background-color: #121212;
       color: #ffffff;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      overflow: hidden;
     }
-    #call-container {
-      width: 100%;
+    #meet {
+      width: 100vw;
       height: 100vh;
-      border: none;
     }
   </style>
 </head>
 <body>
 
-  <div id="call-container"></div>
+  <div id="meet"></div>
 
   <script>
-    // REPLACE THIS WITH YOUR DAILY ROOM URL FROM YOUR DASHBOARD
-    const DAILY_ROOM_URL = "https://yourdomain.daily.co/your-room-name";
+    // 1. Get room name from URL or use a default static room name
+    const urlParams = new URLSearchParams(window.location.search);
+    let roomName = urlParams.get('room');
 
-    const callFrame = window.DailyIframe.createFrame(
-      document.getElementById('call-container'),
-      {
-        showLeaveButton: true,
-        iframeStyle: {
-          width: '100%',
-          height: '100%',
-          border: '0'
-        }
+    // Default room ID if no ?room= parameter is provided
+    if (!roomName) {
+      roomName = "OurPrivatePortalRoom2026_Secure99";
+    }
+
+    // 2. Initialize 8x8/Jitsi API
+    const domain = "8x8.vc";
+    const options = {
+      roomName: `vpaas-magic-cookie-8x8/${roomName}`,
+      width: '100%',
+      height: '100%',
+      parentNode: document.querySelector('#meet'),
+      configOverwrite: {
+        startWithAudioMuted: false,
+        startWithVideoMuted: false,
+        prejoinPageEnabled: false, // Bypasses pre-join screen for instant connection
+        disableDeepLinking: true   // Stops phone from forcing app store download
+      },
+      interfaceConfigOverwrite: {
+        TOOLBAR_BUTTONS: [
+          'microphone', 'camera', 'desktop', 'fullscreen',
+          'hangup', 'tileview', 'chat', 'raisehand'
+        ],
+        SHOW_JITSI_WATERMARK: false
       }
-    );
+    };
 
-    callFrame.join({ url: DAILY_ROOM_URL });
+    const api = new JitsiMeetExternalAPI(domain, options);
   </script>
 </body>
 </html>
