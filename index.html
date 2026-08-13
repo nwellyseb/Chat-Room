@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Portal</title>
+  <title>Our Private Room</title>
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -54,11 +54,26 @@
       border-radius: 4px;
       font-size: 14px;
     }
+    .controls {
+      margin-top: 16px;
+      display: flex;
+      gap: 10px;
+    }
+    button {
+      background: #5865f2;
+      color: white;
+      border: none;
+      padding: 10px 16px;
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    button:hover { background: #4752c4; }
   </style>
 </head>
 <body>
 
-  <div id="status" class="status-bar">Connecting camera...</div>
+  <div id="status" class="status-bar">Accessing camera...</div>
 
   <div class="video-grid">
     <div class="video-card">
@@ -71,106 +86,112 @@
     </div>
   </div>
 
+  <div class="controls">
+    <button onclick="copyRoomLink()">📋 Copy Invite Link</button>
+  </div>
+
   <script>
-    // Hardcoded secret room key - both devices will ALWAYS use this exact room automatically
-    const ROOM_KEY = "our-permanent-private-room-2026";
+    // 1. Get room name from URL, or create a unique secret one
+    const urlParams = new URLSearchParams(window.location.search);
+    let roomName = urlParams.get('room');
+
+    if (!roomName) {
+      roomName = 'our-secret-room-' + Math.floor(100000 + Math.random() * 900000);
+      window.history.replaceState({}, '', `?room=${roomName}`);
+    }
+
+    const hostId = `${roomName}-host`;
+    const guestId = `${roomName}-guest`;
+    const statusEl = document.getElementById('status');
     
-    // STUN configuration for cross-network support (Wi-Fi to Mobile Data)
+    let localStream;
+    let peer;
+
+    // 2. WebRTC Configuration using Metered.ca Open-Relay STUN/TURN Servers
     const peerConfig = {
       config: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
+          { urls: 'stun:stun1.l.google.com:19302' },
+          {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
         ]
       }
     };
 
-    const statusEl = document.getElementById('status');
-    let localStream;
-    let peer;
-    let activeCall;
-
-    // 1. Get Camera Stream
+    // 3. Request camera/microphone permissions
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       .then(stream => {
         localStream = stream;
         document.getElementById('localVideo').srcObject = stream;
-        startPeerSession();
+        tryHost();
       })
       .catch(err => {
-        statusEl.innerText = "Please allow camera and microphone access.";
+        statusEl.innerText = "Please grant camera and microphone access.";
+        console.error(err);
       });
 
-    function startPeerSession() {
-      // Create a unique random session ID for this specific tab/device opening
-      const myUniqueId = `${ROOM_KEY}-${Math.random().toString(36).substring(2, 9)}`;
-      
-      peer = new Peer(myUniqueId, peerConfig);
-
-      peer.on('open', (id) => {
-        statusEl.innerText = "Searching for partner...";
-        listenForIncomingCalls();
-        broadcastPresence();
-      });
-
-      peer.on('error', err => {
-        console.error("Peer error:", err);
-      });
-    }
-
-    // 2. Listen for incoming calls
-    function listenForIncomingCalls() {
-      peer.on('call', call => {
-        activeCall = call;
-        call.answer(localStream);
-        bindCallEvents(call);
-      });
-    }
-
-    // 3. Keep pinging to find if another device is online in the same room
-    function broadcastPresence() {
-      const pingId = `${ROOM_KEY}-anchor`;
-      
-      // Try to establish connection with the anchor peer
-      const conn = peer.connect(pingId);
-      
-      conn.on('open', () => {
-        // Anchor exists, call them
-        dialPartner(pingId);
-      });
-
-      conn.on('error', () => {
-        // No anchor exists yet, register as the primary anchor
-        becomeAnchor(pingId);
-      });
-    }
-
-    function becomeAnchor(anchorId) {
-      // Destroy current instance and take over the fixed anchor slot
-      peer.destroy();
-      
-      peer = new Peer(anchorId, peerConfig);
+    // Device 1: Attempt to register as Host
+    function tryHost() {
+      peer = new Peer(hostId, peerConfig);
 
       peer.on('open', () => {
-        statusEl.innerText = "Waiting for partner to open site...";
-        listenForIncomingCalls();
+        statusEl.innerText = "Waiting for partner... Share the link!";
+        peer.on('call', call => {
+          call.answer(localStream);
+          handleStream(call);
+        });
       });
 
+      // If Host slot is taken, Device 2 registers as Guest
       peer.on('error', err => {
-        // If anchor got claimed while switching, fallback to random peer dial
         if (err.type === 'unavailable-id') {
-          startPeerSession();
+          tryGuest();
+        } else {
+          console.error("Peer error:", err);
         }
       });
     }
 
-    function dialPartner(targetId) {
-      statusEl.innerText = "Partner found! Connecting...";
-      const call = peer.call(targetId, localStream);
-      bindCallEvents(call);
+    // Device 2: Register as Guest and call the Host
+    function tryGuest() {
+      peer = new Peer(guestId, peerConfig);
+
+      peer.on('open', () => {
+        statusEl.innerText = "Partner found! Connecting video...";
+        
+        peer.on('call', call => {
+          call.answer(localStream);
+          handleStream(call);
+        });
+
+        // Dial the host
+        const call = peer.call(hostId, localStream);
+        if (call) {
+          handleStream(call);
+        }
+      });
+
+      peer.on('error', err => {
+        console.error("Guest error:", err);
+      });
     }
 
-    function bindCallEvents(call) {
+    // Handle connected video streams
+    function handleStream(call) {
       call.on('stream', remoteStream => {
         statusEl.innerText = "Connected!";
         document.getElementById('partnerLabel').innerText = "Partner";
@@ -178,11 +199,19 @@
       });
 
       call.on('close', () => {
-        statusEl.innerText = "Partner left. Waiting...";
+        statusEl.innerText = "Partner disconnected.";
         document.getElementById('partnerLabel').innerText = "Partner (Offline)";
         document.getElementById('remoteVideo').srcObject = null;
-        startPeerSession(); // Reset & search again
       });
+
+      call.on('error', err => {
+        console.error("Call error:", err);
+      });
+    }
+
+    function copyRoomLink() {
+      navigator.clipboard.writeText(window.location.href);
+      alert("Room link copied to clipboard! Send this link to your partner.");
     }
   </script>
 </body>
