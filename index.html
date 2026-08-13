@@ -15,6 +15,7 @@
       height: 100vh;
       align-items: center;
       justify-content: center;
+      padding: 12px;
     }
     .status-bar {
       margin-bottom: 16px;
@@ -27,9 +28,9 @@
     }
     .video-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
       gap: 16px;
-      width: 90%;
+      width: 100%;
       max-width: 1000px;
     }
     .video-card {
@@ -57,6 +58,8 @@
       margin-top: 16px;
       display: flex;
       gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
     }
     button {
       background: #5865f2;
@@ -67,12 +70,13 @@
       font-weight: bold;
       cursor: pointer;
     }
-    button:hover { background: #4752c4; }
+    button.secondary { background: #4e5058; }
+    button:hover { opacity: 0.9; }
   </style>
 </head>
 <body>
 
-  <div id="status" class="status-bar">Accessing camera...</div>
+  <div id="status" class="status-bar">Initializing camera...</div>
 
   <div class="video-grid">
     <div class="video-card">
@@ -86,34 +90,37 @@
   </div>
 
   <div class="controls">
-    <button onclick="copyRoomLink()">📋 Copy Invite Link</button>
+    <button onclick="copyRoomLink()">📋 Copy Link</button>
+    <button class="secondary" onclick="newRoom()">🔄 Create New Room</button>
   </div>
 
-  <!-- Serverless WebRTC Signaling via MQTT -->
+  <!-- Trystero via MQTT -->
   <script type="module">
     import { joinRoom } from 'https://cdn.jsdelivr.net/npm/trystero@0.22.0/mqtt.min.js';
-
-    // 1. Get room key from URL or generate a unique room code
-    const urlParams = new URLSearchParams(window.location.search);
-    let roomCode = urlParams.get('room');
-
-    if (!roomCode) {
-      roomCode = 'room-' + Math.random().toString(36).substring(2, 9);
-      window.history.replaceState({}, '', `?room=${roomCode}`);
-    }
 
     const statusEl = document.getElementById('status');
     const partnerLabel = document.getElementById('partnerLabel');
     const remoteVideo = document.getElementById('remoteVideo');
     let localStream;
+    let room;
 
-    // 2. STUN & TURN Relay Configuration
+    // Parse or generate room code
+    const urlParams = new URLSearchParams(window.location.search);
+    let roomCode = urlParams.get('room');
+
+    if (!roomCode) {
+      roomCode = 'room-' + Math.random().toString(36).substring(2, 8);
+      window.history.replaceState({}, '', `?room=${roomCode}`);
+    }
+
+    // WebRTC & TURN Relay configuration
     const config = {
-      appId: 'our-private-portal-v1',
+      appId: 'private-portal-app-v2',
       rtcConfig: {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
           {
             urls: 'turn:openrelay.metered.ca:80',
             username: 'openrelayproject',
@@ -128,47 +135,51 @@
       }
     };
 
-    // 3. Initialize Camera & Room Connection
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then(stream => {
-        localStream = stream;
-        document.getElementById('localVideo').srcObject = stream;
-        statusEl.innerText = "Waiting for partner... Copy and send her the link!";
+    async function init() {
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        document.getElementById('localVideo').srcObject = localStream;
+        statusEl.innerText = "Waiting for partner... Send her the link!";
 
-        // Join the room defined by the URL ?room= parameter
-        const room = joinRoom(config, roomCode);
-
-        // When your partner opens the exact same link
-        room.onPeerJoin(peerId => {
-          statusEl.innerText = "Partner found! Connecting video...";
-          room.addStream(localStream, peerId);
-        });
-
-        // Receiving remote video stream
-        room.onPeerStream((remoteStream, peerId) => {
-          statusEl.innerText = "Connected!";
-          partnerLabel.innerText = "Partner";
-          remoteVideo.srcObject = remoteStream;
-        });
-
-        // Handle partner leaving/refreshing
-        room.onPeerLeave(peerId => {
-          statusEl.innerText = "Partner disconnected. Waiting for her to re-open the link...";
-          partnerLabel.innerText = "Partner (Offline)";
-          remoteVideo.srcObject = null;
-        });
-
-      })
-      .catch(err => {
-        statusEl.innerText = "Please grant camera & microphone permissions.";
+        connectRoom();
+      } catch (err) {
+        statusEl.innerText = "⚠️ Camera access blocked. Allow permissions and refresh.";
         console.error(err);
+      }
+    }
+
+    function connectRoom() {
+      room = joinRoom(config, roomCode);
+
+      room.onPeerJoin(peerId => {
+        statusEl.innerText = "Partner detected! Connecting...";
+        room.addStream(localStream, peerId);
       });
 
-    // Global copy function for button
+      room.onPeerStream((remoteStream, peerId) => {
+        statusEl.innerText = "🟢 Connected!";
+        partnerLabel.innerText = "Partner";
+        remoteVideo.srcObject = remoteStream;
+      });
+
+      room.onPeerLeave(peerId => {
+        statusEl.innerText = "Partner disconnected. Waiting for re-connect...";
+        partnerLabel.innerText = "Partner (Offline)";
+        remoteVideo.srcObject = null;
+      });
+    }
+
     window.copyRoomLink = function() {
       navigator.clipboard.writeText(window.location.href);
-      alert("Room link copied! Send this link to your partner.");
+      alert("Link copied! Send it to your partner.");
     };
+
+    window.newRoom = function() {
+      const newCode = 'room-' + Math.random().toString(36).substring(2, 8);
+      window.location.search = `?room=${newCode}`;
+    };
+
+    init();
   </script>
 </body>
 </html>
