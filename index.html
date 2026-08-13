@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Private Room</title>
+  <title>Our Private Room</title>
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -17,13 +17,20 @@
       align-items: center;
       justify-content: center;
     }
+    .status {
+      margin-bottom: 16px;
+      padding: 8px 16px;
+      background: #2b2d31;
+      border-radius: 20px;
+      font-size: 14px;
+      color: #949ba4;
+    }
     .video-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
       gap: 16px;
       width: 90%;
       max-width: 1000px;
-      margin-bottom: 20px;
     }
     .video-card {
       position: relative;
@@ -46,26 +53,11 @@
       border-radius: 4px;
       font-size: 14px;
     }
-    .controls {
-      display: flex;
-      gap: 12px;
-      background: #2b2d31;
-      padding: 12px 20px;
-      border-radius: 8px;
-    }
-    button {
-      background-color: #5865f2;
-      color: white;
-      border: none;
-      padding: 10px 16px;
-      border-radius: 4px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    button:hover { background-color: #4752c4; }
   </style>
 </head>
 <body>
+
+  <div id="status" class="status">Connecting to room...</div>
 
   <div class="video-grid">
     <div class="video-card">
@@ -78,53 +70,79 @@
     </div>
   </div>
 
-  <div class="controls">
-    <button onclick="startCall()">Call Partner</button>
-  </div>
-
   <script>
-    // DEFINE A UNIQUE ROOM ID HERE (Keep this secret between you two)
-    const ROOM_ID = "our-secret-room-123456"; 
+    // 1. Get room name from URL, or default to a unique secret room
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomId = urlParams.get('room') || 'our-private-room-987654';
 
+    const statusEl = document.getElementById('status');
     let localStream;
     let peer;
 
-    // Prompt user for camera and microphone access
+    // 2. Get local camera and microphone stream
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       .then(stream => {
         localStream = stream;
         document.getElementById('localVideo').srcObject = stream;
-        initPeer();
+        connectToRoom();
       })
-      .catch(err => console.error("Camera access denied:", err));
-
-    function initPeer() {
-      // Connect to PeerJS server
-      peer = new Peer();
-
-      peer.on('open', (id) => {
-        console.log('Connected with Peer ID:', id);
+      .catch(err => {
+        statusEl.innerText = 'Camera/Microphone access denied.';
+        console.error(err);
       });
 
-      // Handle incoming call from your partner
-      peer.on('call', (call) => {
-        call.answer(localStream);
-        call.on('stream', (remoteStream) => {
+    function connectToRoom() {
+      // Host ID will always be the room name
+      const hostId = `host-${roomId}`;
+      
+      // Try registering as the Guest first
+      peer = new Peer();
+
+      peer.on('open', () => {
+        statusEl.innerText = 'Looking for partner...';
+        
+        // Try calling the Host
+        const call = peer.call(hostId, localStream);
+
+        let connected = false;
+
+        call.on('stream', remoteStream => {
+          connected = true;
+          statusEl.innerText = 'Connected!';
           document.getElementById('remoteVideo').srcObject = remoteStream;
         });
+
+        // If Host isn't there yet, assume the Host role
+        setTimeout(() => {
+          if (!connected) {
+            call.close();
+            peer.destroy();
+            becomeHost(hostId);
+          }
+        }, 2000);
       });
     }
 
-    // Call the partner when the button is clicked
-    function startCall() {
-      // Prompt for partner's ID or hardcode logic
-      const partnerId = prompt("Enter your partner's Peer ID:");
-      if (partnerId) {
-        const call = peer.call(partnerId, localStream);
-        call.on('stream', (remoteStream) => {
+    function becomeHost(hostId) {
+      statusEl.innerText = 'Waiting for partner to join...';
+      
+      // Register with the fixed Host ID
+      peer = new Peer(hostId);
+
+      peer.on('call', call => {
+        statusEl.innerText = 'Partner joined!';
+        call.answer(localStream);
+        call.on('stream', remoteStream => {
           document.getElementById('remoteVideo').srcObject = remoteStream;
         });
-      }
+      });
+
+      peer.on('error', err => {
+        if (err.type === 'unavailable-id') {
+          // If ID is taken, try connecting as guest again
+          setTimeout(connectToRoom, 1000);
+        }
+      });
     }
   </script>
 </body>
