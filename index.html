@@ -3,134 +3,148 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Private Portal</title>
+  <title>Private P2P Portal</title>
+  <!-- 100% Free PeerJS Library -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background-color: #0d0d0d;
+      background-color: #000000;
       color: #ffffff;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
+      width: 100vw;
       overflow: hidden;
     }
-
-    #video-grid {
+    #video-container {
       position: relative;
-      width: 100vw;
-      height: 100vh;
-      background: #000;
+      width: 100%;
+      height: 100%;
     }
-
-    /* Remote user takes full screen */
     #remoteVideo {
       width: 100%;
       height: 100%;
       object-fit: cover;
     }
-
-    /* Local user floats in corner */
     #localVideo {
       position: absolute;
-      top: 20px;
-      right: 20px;
-      width: 130px;
-      height: 180px;
+      top: 16px;
+      right: 16px;
+      width: 120px;
+      height: 160px;
       object-fit: cover;
       border-radius: 12px;
-      border: 2px solid rgba(255, 255, 255, 0.3);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-      z-index: 10;
-      background: #222;
-      transform: scaleX(-1); /* Mirror local video */
+      border: 2px solid rgba(255, 255, 255, 0.4);
+      background: #111;
+      transform: scaleX(-1);
     }
-
     #status {
       position: absolute;
-      bottom: 30px;
+      bottom: 24px;
       left: 50%;
       transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.75);
-      padding: 10px 20px;
+      background: rgba(0, 0, 0, 0.8);
+      padding: 10px 18px;
       border-radius: 20px;
-      font-size: 14px;
-      letter-spacing: 0.5px;
-      z-index: 20;
-      backdrop-filter: blur(8px);
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 13px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      text-align: center;
       pointer-events: none;
     }
   </style>
 </head>
 <body>
 
-  <div id="video-grid">
+  <div id="video-container">
     <video id="remoteVideo" autoplay playsinline></video>
     <video id="localVideo" autoplay playsinline muted></video>
-    <div id="status">Connecting camera...</div>
+    <div id="status">Initializing camera...</div>
   </div>
 
-  <script type="module">
-    import { joinRoom } from 'https://cdn.jsdelivr.net/npm/trystero@0.18.0/torrent.min.js';
-
+  <script>
     const statusEl = document.getElementById('status');
     const localVideo = document.getElementById('localVideo');
     const remoteVideo = document.getElementById('remoteVideo');
 
-    // App ID & Shared Room Identifier
-    const config = { 
-      appId: 'private-p2p-portal-v1',
-      rtcConfig: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
-        ]
-      }
-    };
-    
-    // Visiting the same link lands both of you in this room
-    const ROOM_NAME = 'our-private-portal-room-key-2026';
+    // Permanent room IDs for Person A and Person B
+    const HOST_ID = "our-portal-unique-host-99";
+    const GUEST_ID = "our-portal-unique-guest-99";
 
-    async function init() {
+    let localStream;
+
+    async function start() {
       try {
-        // 1. Get local camera & mic
-        const localStream = await navigator.mediaDevices.getUserMedia({ 
-          video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
-          audio: true 
+        // Request Camera & Mic
+        localStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user" },
+          audio: true
         });
         localVideo.srcObject = localStream;
-        statusEl.innerText = "Waiting for partner to open link...";
+        statusEl.innerText = "Camera active. Connecting...";
 
-        // 2. Join P2P Room
-        const room = joinRoom(config, ROOM_NAME);
-
-        // Send local stream to connected peer
-        room.addStream(localStream);
-
-        // Receive partner's stream
-        room.onPeerStream((remoteStream, peerId) => {
-          remoteVideo.srcObject = remoteStream;
-          statusEl.innerText = "Connected";
-          setTimeout(() => { statusEl.style.opacity = '0'; }, 3000);
+        // Try to become the HOST first using Google's free public STUN servers
+        const peer = new Peer(HOST_ID, {
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+          }
         });
 
-        // Partner leaves
-        room.onPeerLeave((peerId) => {
-          remoteVideo.srcObject = null;
-          statusEl.style.opacity = '1';
-          statusEl.innerText = "Partner disconnected. Waiting...";
+        peer.on('open', () => {
+          statusEl.innerText = "Room created. Waiting for partner...";
+        });
+
+        // Answer incoming call from partner
+        peer.on('call', (call) => {
+          call.answer(localStream);
+          call.on('stream', (remoteStream) => {
+            remoteVideo.srcObject = remoteStream;
+            statusEl.innerText = "Connected";
+            setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
+          });
+        });
+
+        // If HOST_ID is taken, become GUEST and call the HOST
+        peer.on('error', (err) => {
+          if (err.type === 'unavailable-id') {
+            connectAsGuest();
+          } else {
+            console.error(err);
+            statusEl.innerText = "Connection error. Retrying...";
+          }
         });
 
       } catch (err) {
         console.error(err);
-        statusEl.innerText = "Camera permission denied or unavailable.";
+        statusEl.innerText = "Please allow Camera & Microphone permissions.";
       }
     }
 
-    init();
+    function connectAsGuest() {
+      const guestPeer = new Peer(GUEST_ID, {
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' }
+          ]
+        }
+      });
+
+      guestPeer.on('open', () => {
+        statusEl.innerText = "Connecting to partner...";
+        const call = guestPeer.call(HOST_ID, localStream);
+        
+        call.on('stream', (remoteStream) => {
+          remoteVideo.srcObject = remoteStream;
+          statusEl.innerText = "Connected";
+          setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
+        });
+      });
+    }
+
+    start();
   </script>
 </body>
 </html>
