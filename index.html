@@ -91,79 +91,86 @@
   </div>
 
   <script>
-    // 1. Get room name from URL, or create a random one
+    // 1. Ensure a shared room name exists in the URL
     const urlParams = new URLSearchParams(window.location.search);
     let roomName = urlParams.get('room');
 
     if (!roomName) {
-      // If no room in URL, create a unique secret room name
-      roomName = 'room-' + Math.random().toString(36).substring(2, 9);
+      roomName = 'secret-' + Math.random().toString(36).substring(2, 9);
       window.history.replaceState({}, '', `?room=${roomName}`);
     }
 
-    const hostId = `host-${roomName}`;
     const statusEl = document.getElementById('status');
     let localStream;
     let peer;
+    let callInterval;
 
-    // 2. Start Camera
+    // 2. Start Camera first
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       .then(stream => {
         localStream = stream;
         document.getElementById('localVideo').srcObject = stream;
-        initConnection();
+        setupPeer();
       })
       .catch(err => {
-        statusEl.innerText = "Please allow camera/microphone access.";
+        statusEl.innerText = "Please allow camera and microphone access.";
       });
 
-    function initConnection() {
-      // Try to become the Host first
-      peer = new Peer(hostId);
+    function setupPeer() {
+      // Create a unique Peer ID for THIS specific browser session
+      const myId = `${roomName}-${Math.random().toString(36).substring(2, 7)}`;
+      peer = new Peer(myId);
 
-      peer.on('open', () => {
-        statusEl.innerText = "Waiting for partner... Send her the link!";
+      peer.on('open', id => {
+        statusEl.innerText = "Waiting for partner... Share the link!";
+        startCallingPartner();
       });
 
-      // Handle incoming partner connection (when she opens the link)
+      // Answer incoming call from partner
       peer.on('call', call => {
-        statusEl.innerText = "Partner connected!";
-        document.getElementById('partnerLabel').innerText = "Partner";
         call.answer(localStream);
-        call.on('stream', remoteStream => {
-          document.getElementById('remoteVideo').srcObject = remoteStream;
-        });
+        handleCall(call);
       });
 
-      // If the Host ID is already taken, it means your partner is already in the room!
-      peer.on('error', err => {
-        if (err.type === 'unavailable-id') {
-          connectAsGuest();
-        } else {
-          console.error(err);
-        }
-      });
+      peer.on('error', err => console.error(err));
     }
 
-    function connectAsGuest() {
-      // Create a guest connection
-      peer = new Peer();
-
-      peer.on('open', () => {
-        statusEl.innerText = "Connecting to partner...";
-        const call = peer.call(hostId, localStream);
-
-        call.on('stream', remoteStream => {
-          statusEl.innerText = "Connected!";
-          document.getElementById('partnerLabel').innerText = "Partner";
-          document.getElementById('remoteVideo').srcObject = remoteStream;
+    function startCallingPartner() {
+      // Constantly check if partner is online every 2 seconds until connected
+      callInterval = setInterval(() => {
+        // Query PeerJS server for active peers in this room
+        peer.listAllPeers(peers => {
+          const partnerPeerId = peers.find(id => id.startsWith(roomName) && id !== peer.id);
+          
+          if (partnerPeerId) {
+            clearInterval(callInterval); // Stop probing once partner is found
+            statusEl.innerText = "Connecting to partner...";
+            const call = peer.call(partnerPeerId, localStream);
+            handleCall(call);
+          }
         });
+      }, 2000);
+    }
+
+    function handleCall(call) {
+      call.on('stream', remoteStream => {
+        if (callInterval) clearInterval(callInterval);
+        statusEl.innerText = "Connected!";
+        document.getElementById('partnerLabel').innerText = "Partner";
+        document.getElementById('remoteVideo').srcObject = remoteStream;
+      });
+
+      call.on('close', () => {
+        statusEl.innerText = "Partner disconnected. Waiting...";
+        document.getElementById('partnerLabel').innerText = "Partner (Offline)";
+        document.getElementById('remoteVideo').srcObject = null;
+        startCallingPartner(); // Resume looking for partner if they drop
       });
     }
 
     function copyRoomLink() {
       navigator.clipboard.writeText(window.location.href);
-      alert("Room link copied to clipboard! Send this link to your girlfriend.");
+      alert("Room link copied! Send this link to your partner.");
     }
   </script>
 </body>
